@@ -23,9 +23,11 @@ const float MAX_MULTIPLIER = 10.0;
 const float MIN_MULTIPLIER = 0.5;
 uint8_t previous_input_1 = 0;
 
-// Function to map joystick values to motor speed
-int mapJoystickToSpeed(uint16_t value) {
-  return map(value, 0, 255, -255, 255);
+// Xbox / many wireless receivers: stick bytes are 0x00..0xFF with neutral 0x80.
+int stickAxisToSpeed(uint8_t value) {
+  int centered = (int)value - 128;
+  int speed = (centered * 255) / 128;
+  return constrain(speed, -255, 255);
 }
 
 // Function to apply dead zone
@@ -58,17 +60,17 @@ void loop() {
   }
 
   if (system_ready) {
-    // Handle speed multiplier (assuming button presses are on input_1)
-    if ((input_1 & 0x40) && !(previous_input_1 & 0x40)) {  // Assuming 0x01 is for increasing speed
+    // Speed multiplier: edge-detect bits in input_1 (mask may need tuning per joystick)
+    if ((input_1 & 0x40) && !(previous_input_1 & 0x40)) {
       speed_multiplier = min(speed_multiplier + MULTIPLIER_INCREMENT, MAX_MULTIPLIER);
-    } else if ((input_1 & 0x80) && !(previous_input_1 & 0x80)) {  // Assuming 0x02 is for decreasing speed
+    } else if ((input_1 & 0x80) && !(previous_input_1 & 0x80)) {
       speed_multiplier = max(speed_multiplier - MULTIPLIER_INCREMENT, MIN_MULTIPLIER);
     }
     previous_input_1 = input_1;
 
-    // Map joystick movement to motor speeds
-    int forward_speed = -mapJoystickToSpeed(y_axis);  // Invert for intuitive control
-    int strafe_speed = mapJoystickToSpeed(x_axis);
+    // Map stick (neutral 0x80) to motor mix; invert Y so stick-up = forward
+    int forward_speed = -stickAxisToSpeed((uint8_t)y_axis);
+    int strafe_speed = stickAxisToSpeed((uint8_t)x_axis);
 
     // Apply speed multiplier
     forward_speed *= speed_multiplier;
@@ -159,7 +161,7 @@ extern "C" {
     Serial.printf("HID device address = %d, instance = %d is unmounted\r\n", dev_addr, instance);
   }
 
-  // Invoked when received report from device via interrupt endpoint
+  // Xbox-style wireless receiver: often 5+ bytes; left stick at [3],[4], neutral 0x80.
   void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len) {
     Serial.printf("HIDreport : ");
     for (uint16_t i = 0; i < len; i++) {
@@ -167,8 +169,8 @@ extern "C" {
     }
     Serial.println();
 
-    if (len >= 7) {  // Ensure we have enough data
-      input_1 = report[0];
+    if (len >= 5) {
+      input_1 = (uint16_t)report[0] | ((uint16_t)report[1] << 8);
       x_axis = report[3];
       y_axis = report[4];
     }
